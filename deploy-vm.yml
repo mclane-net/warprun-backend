@@ -1,0 +1,32 @@
+# pipelines/deploy-vm.yml
+# Example: Deploy VM pipeline
+
+workflow:
+  name: "Deploy VM Pipeline"
+
+stages:
+  - prepare
+  - deploy
+  - verify
+
+prepare:
+  stage: prepare
+  script:
+    - echo "Preparing VM deployment..."
+    - echo "Correlation ID: $WARPRUN_CORRELATION_ID"
+    - echo "Parameters received:"
+    - env | grep WARPRUN_ || echo "No parameters"
+
+deploy:
+  stage: deploy
+  script:
+    - echo "Deploying VM..."
+    - echo "This is where your actual deployment script would run"
+    - sleep 2
+    - echo "VM deployed successfully!"
+
+verify:
+  stage: verify
+  script:
+    - echo "Verifying deployment..."
+    - echo "All checks passed!"
