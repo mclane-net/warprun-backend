@@ -1,39 +1,55 @@
-variables:
-  WARPRUN_CORRELATION_ID: ""  # Will be populated by WarpRun
+# .gitlab-ci.yml
+# WarpRun Dynamic Pipeline Router
+# This file routes to child pipelines based on WARPRUN_PIPELINE_NAME variable
+
+workflow:
+  name: "WarpRun: ${WARPRUN_PIPELINE_NAME:-no-pipeline-specified}"
 
 stages:
-  - build
-  - notify
+  - validate
+  - execute
 
-# ... your build jobs ...
-
-# Optional: Send feedback back to WarpRun at the end
-notify_warprun:
-  stage: notify
+# Validate that the requested pipeline exists
+validate-pipeline:
+  stage: validate
   script:
+    - echo "Requested pipeline: $WARPRUN_PIPELINE_NAME"
+    - echo "Correlation ID: $WARPRUN_CORRELATION_ID"
     - |
-      curl -X POST "$WARPRUN_API_URL/api/backend-feedback" \
-      -H "Authorization: Bearer $KEYCLOAK_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{
-        "correlationId": "'$WARPRUN_CORRELATION_ID'",
-        variables:
-  WARPRUN_CORRELATION_ID: ""  # Will be populated by WarpRun
+      if [ -z "$WARPRUN_PIPELINE_NAME" ]; then
+        echo "ERROR: WARPRUN_PIPELINE_NAME variable is not set"
+        exit 1
+      fi
+    - |
+      if [ ! -f "pipelines/${WARPRUN_PIPELINE_NAME}.yml" ]; then
+        echo "ERROR: Pipeline file 'pipelines/${WARPRUN_PIPELINE_NAME}.yml' not found"
+        echo "Available pipelines:"
+        ls -la pipelines/
+        exit 1
+      fi
+    - echo "Pipeline file found. Proceeding..."
+  rules:
+    - if: $WARPRUN_PIPELINE_NAME
 
-stages:
-  - build
-  - notify
+# Generate and trigger the child pipeline
+execute-pipeline:
+  stage: execute
+  needs: [validate-pipeline]
+  trigger:
+    include:
+      - local: "pipelines/${WARPRUN_PIPELINE_NAME}.yml"
+    strategy: depend
+  rules:
+    - if: $WARPRUN_PIPELINE_NAME
 
-# ... your build jobs ...
-
-# Optional: Send feedback back to WarpRun at the end
-notify_warprun:
-  stage: notify
+# Fallback when no pipeline name is provided
+no-pipeline-specified:
+  stage: validate
   script:
-    - |
-      curl -X POST "$WARPRUN_API_URL/api/backend-feedback" \
-      -H "Authorization: Bearer $KEYCLOAK_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d '{
-        "correlationId": "'$WARPRUN_CORRELATION_ID'",
-        
+    - echo "No WARPRUN_PIPELINE_NAME provided."
+    - echo "This pipeline is designed to be triggered by WarpRun with a pipeline name."
+    - echo "Available pipelines:"
+    - ls -la pipelines/ || echo "No pipelines folder found"
+    - exit 1
+  rules:
+    - if: $WARPRUN_PIPELINE_NAME == null
