@@ -1,93 +1,268 @@
-# warprun-backend
+# GitLab Dynamic Child Pipeline Router for WarpRun
 
+## Overview
 
+This configuration enables WarpRun to trigger different pipelines from a single GitLab repository using the **Dynamic Child Pipeline** pattern. Instead of maintaining separate `.gitlab-ci.yml` configurations or multiple repositories, all pipeline definitions are stored in a `pipelines/` folder and dynamically selected at runtime.
 
-## Getting started
-
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## Architecture
 
 ```
-cd existing_repo
-git remote add origin https://warprun-gitlab.dmz.hyperuranium.local/warprun/warprun-backend.git
-git branch -M main
-git push -uf origin main
+┌─────────────────────────────────────────────────────────────────┐
+│                        WarpRun Portal                           │
+│                              │                                  │
+│                    POST /api/pipeline-runs                      │
+│                    WARPRUN_PIPELINE_NAME=hello-world            │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    GitLab Trigger API                           │
+│              POST /api/v4/projects/:id/trigger/pipeline         │
+│              variables[WARPRUN_PIPELINE_NAME]=hello-world       │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   .gitlab-ci.yml (Router)                       │
+│                                                                 │
+│  ┌─────────────┐    ┌──────────────────┐    ┌────────────────┐ │
+│  │  validate   │───▶│ generate-child   │───▶│   execute      │ │
+│  │  -pipeline  │    │ -config          │    │   -pipeline    │ │
+│  └─────────────┘    └──────────────────┘    └───────┬────────┘ │
+│                                                     │          │
+│  Stage: validate ──────────────────────────  Stage: execute    │
+└─────────────────────────────────────────────────────┬──────────┘
+                                                      │
+                               trigger:include:local  │
+                                                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              pipelines/hello-world.yml (Child)                  │
+│                                                                 │
+│  ┌─────────────┐    ┌──────────────────┐    ┌────────────────┐ │
+│  │   build     │───▶│     test         │───▶│    deploy      │ │
+│  └─────────────┘    └──────────────────┘    └────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## Integrate with your tools
+## Repository Structure
 
-- [ ] [Set up project integrations](https://warprun-gitlab.dmz.hyperuranium.local/warprun/warprun-backend/-/settings/integrations)
+```
+repository/
+├── .gitlab-ci.yml              # Router (this file)
+└── pipelines/
+    ├── hello-world.yml         # Child pipeline: hello-world
+    ├── deploy-prod.yml         # Child pipeline: deploy-prod
+    ├── backup.yml              # Child pipeline: backup
+    └── cleanup.yml             # Child pipeline: cleanup
+```
 
-## Collaborate with your team
+## Router Configuration (.gitlab-ci.yml)
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+```yaml
+# .gitlab-ci.yml
+# WarpRun Dynamic Pipeline Router
 
-## Test and Deploy
+workflow:
+  name: "WarpRun: $WARPRUN_PIPELINE_NAME"  
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "trigger"   # API/trigger token (WarpRun)
+    - if: $CI_PIPELINE_SOURCE == "web"       # Manual from GitLab UI
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $WARPRUN_PIPELINE_NAME  # Scheduled
+    - when: never                            # Block push, merge_request, etc.
 
-Use the built-in continuous integration in GitLab.
+stages:
+  - validate
+  - execute
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+# Validate that the requested pipeline exists
+validate-pipeline:
+  stage: validate
+  script:
+    - echo "Requested pipeline - $WARPRUN_PIPELINE_NAME"
+    - echo "Correlation ID - $WARPRUN_CORRELATION_ID"
+    - if [ -z "$WARPRUN_PIPELINE_NAME" ]; then echo "ERROR - WARPRUN_PIPELINE_NAME variable is not set"; exit 1; fi
+    - if [ ! -f "pipelines/${WARPRUN_PIPELINE_NAME}.yml" ]; then echo "ERROR - Pipeline file not found"; ls -la pipelines/; exit 1; fi
+    - echo "Pipeline file found. Proceeding..."
+  rules:
+    - if: $WARPRUN_PIPELINE_NAME
+  artifacts:
+    reports:
+      dotenv: pipeline.env
 
-***
+# Generate the pipeline path for child trigger
+generate-child-config:
+  stage: validate
+  needs: [validate-pipeline]
+  script:
+    - echo "CHILD_PIPELINE_FILE=pipelines/${WARPRUN_PIPELINE_NAME}.yml" >> pipeline.env
+    - cat pipeline.env
+  artifacts:
+    reports:
+      dotenv: pipeline.env
+  rules:
+    - if: $WARPRUN_PIPELINE_NAME
 
-# Editing this README
+# Trigger the child pipeline with explicit include path
+execute-pipeline:
+  stage: execute
+  needs: [generate-child-config]
+  trigger:
+    include:
+      - local: $CHILD_PIPELINE_FILE
+    strategy: depend
+    forward:
+      pipeline_variables: true
+  rules:
+    - if: $WARPRUN_PIPELINE_NAME
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+# Fallback when no pipeline name is provided
+no-pipeline-specified:
+  stage: validate
+  script:
+    - echo "No WARPRUN_PIPELINE_NAME provided."
+    - echo "This pipeline is designed to be triggered by WarpRun."
+    - ls -la pipelines/ || echo "No pipelines folder found"
+    - exit 1
+  rules:
+    - if: $WARPRUN_PIPELINE_NAME == null
+```
 
-## Suggestions for a good README
+## Child Pipeline Example (pipelines/hello-world.yml)
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+```yaml
+# pipelines/hello-world.yml
+workflow:
+  name: "Hello World Pipeline"
 
-## Name
-Choose a self-explaining name for your project.
+stages:
+  - run
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+hello:
+  stage: run
+  script:
+    - echo "Hello from dynamic child pipeline!"
+    - echo "Correlation ID: $WARPRUN_CORRELATION_ID"
+    - echo "Pipeline Name: $WARPRUN_PIPELINE_NAME"
+```
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+## Key Components Explained
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+### 1. Workflow Rules (Pipeline Filtering)
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+| Source | Description | Allowed |
+|--------|-------------|---------|
+| `trigger` | API call with trigger token (WarpRun) | ✅ |
+| `web` | Manual run from GitLab UI | ✅ |
+| `schedule` | Scheduled pipeline (requires variable) | ✅ |
+| `push` | Git push to repository | ❌ |
+| `merge_request_event` | Merge request | ❌ |
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+### 2. Stages (Required for Variable Propagation)
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+```yaml
+stages:
+  - validate    # validate-pipeline, generate-child-config
+  - execute     # execute-pipeline
+```
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+**Why stages are required:** The `trigger:include:local: $CHILD_PIPELINE_FILE` needs the dotenv artifact variable to be loaded **between stages**. Without explicit stages, variable propagation is unreliable.
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+### 3. Dotenv Artifacts
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+```yaml
+artifacts:
+  reports:
+    dotenv: pipeline.env
+```
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+The `generate-child-config` job writes `CHILD_PIPELINE_FILE=pipelines/xxx.yml` to `pipeline.env`. GitLab automatically loads this as a CI/CD variable for subsequent jobs.
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+### 4. Variable Forwarding
 
-## License
-For open source projects, say how it is licensed.
+```yaml
+forward:
+  pipeline_variables: true
+```
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+This ensures `WARPRUN_CORRELATION_ID`, `WARPRUN_PIPELINE_NAME`, and any custom variables are passed to the child pipeline.
+
+### 5. Strategy: Depend
+
+```yaml
+strategy: depend
+```
+
+The parent pipeline waits for the child to complete and inherits its status (pass/fail).
+
+## WarpRun Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `WARPRUN_PIPELINE_NAME` | Pipeline to execute (without .yml) | `hello-world` |
+| `WARPRUN_CORRELATION_ID` | Unique ID for tracing | `abc-123-def` |
+| Custom variables | Passed from ServiceCatalogItem | `ENVIRONMENT=prod` |
+
+## Adding a New Pipeline
+
+1. Create `pipelines/my-new-pipeline.yml`:
+   ```yaml
+   workflow:
+     name: "My New Pipeline"
+   
+   my-job:
+     script:
+       - echo "Running my pipeline"
+       - echo "Correlation: $WARPRUN_CORRELATION_ID"
+   ```
+
+2. Trigger from WarpRun with `WARPRUN_PIPELINE_NAME=my-new-pipeline`
+
+3. Or test manually in GitLab UI:
+   - Go to Build → Pipelines → Run pipeline
+   - Add variable: `WARPRUN_PIPELINE_NAME` = `my-new-pipeline`
+   - Click "Run pipeline"
+
+## Scheduling Pipelines
+
+1. Go to Build → Pipeline schedules → New schedule
+2. Set cron expression (e.g., `0 2 * * *` for daily at 2 AM)
+3. Add variable: `WARPRUN_PIPELINE_NAME` = `backup`
+4. Save
+
+The router will trigger `pipelines/backup.yml` on schedule.
+
+## Troubleshooting
+
+### Pipeline shows only "validate-pipeline" job
+- Check if `pipelines/{name}.yml` file exists
+- Verify `WARPRUN_PIPELINE_NAME` variable is set correctly
+
+### Child pipeline not receiving variables
+- Ensure `forward: pipeline_variables: true` is set
+- Check if variables are defined in parent trigger
+
+### Pipeline runs on every push
+- Verify `workflow:rules` blocks unwanted sources
+- Check that `- when: never` is the last rule
+
+### "Pipeline file not found" error
+- File must be in `pipelines/` folder
+- Extension must be `.yml` (not `.yaml` unless you update the script)
+- Filename must match exactly (case-sensitive)
+
+## GitLab UI Display
+
+With `workflow:name: "WarpRun: $WARPRUN_PIPELINE_NAME"`, pipelines display as:
+
+| Pipeline Name | Triggered By |
+|---------------|--------------|
+| WarpRun: hello-world | WarpRun API |
+| WarpRun: deploy-prod | WarpRun API |
+| WarpRun: backup | Schedule |
+
+## Security Considerations
+
+1. **Trigger Token** - Store securely, rotate periodically
+2. **Project Access Token** - Use `Reporter` role with `read_api` scope only
+3. **Variable validation** - Router validates file existence before trigger
+4. **Workflow rules** - Blocks unauthorized pipeline sources
