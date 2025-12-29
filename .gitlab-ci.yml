@@ -2,48 +2,39 @@
 # WarpRun Dynamic Pipeline Router
 
 workflow:
-  name: "WarpRun: $WARPRUN_PIPELINE_NAME"  
+  name: "WarpRun: $WARPRUN_PIPELINE_NAME"
   rules:
-    - if: $CI_PIPELINE_SOURCE == "trigger"  # API/trigger token (WarpRun)
-    - if: $CI_PIPELINE_SOURCE == "web"      # Manual from GitLab UI
+    - if: $CI_PIPELINE_SOURCE == "trigger"
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $WARPRUN_PIPELINE_NAME
     - when: never
 
-stages:
-  - validate
-  - execute
-
-# Validate that the requested pipeline exists
+# Validate pipeline and set child config path
 validate-pipeline:
-  stage: validate
   script:
     - echo "Requested pipeline - $WARPRUN_PIPELINE_NAME"
     - echo "Correlation ID - $WARPRUN_CORRELATION_ID"
-    - if [ -z "$WARPRUN_PIPELINE_NAME" ]; then echo "ERROR - WARPRUN_PIPELINE_NAME variable is not set"; exit 1; fi
-    - if [ ! -f "pipelines/${WARPRUN_PIPELINE_NAME}.yml" ]; then echo "ERROR - Pipeline file not found"; ls -la pipelines/; exit 1; fi
-    - echo "Pipeline file found. Proceeding..."
-  rules:
-    - if: $WARPRUN_PIPELINE_NAME
-  artifacts:
-    reports:
-      dotenv: pipeline.env
-
-# Generate the pipeline path for child trigger
-generate-child-config:
-  stage: validate
-  needs: [validate-pipeline]
-  script:
-    - echo "CHILD_PIPELINE_FILE=pipelines/${WARPRUN_PIPELINE_NAME}.yml" >> pipeline.env
+    - |
+      if [ -z "$WARPRUN_PIPELINE_NAME" ]; then
+        echo "PIPELINE_VALID=false" >> pipeline.env
+        echo "PIPELINE_ERROR=WARPRUN_PIPELINE_NAME variable is not set" >> pipeline.env
+      elif [ ! -f "pipelines/${WARPRUN_PIPELINE_NAME}.yml" ]; then
+        echo "PIPELINE_VALID=false" >> pipeline.env
+        echo "PIPELINE_ERROR=Pipeline file not found: pipelines/${WARPRUN_PIPELINE_NAME}.yml" >> pipeline.env
+        ls -la pipelines/ 2>/dev/null || echo "No pipelines folder"
+      else
+        echo "PIPELINE_VALID=true" >> pipeline.env
+        echo "CHILD_PIPELINE_FILE=pipelines/${WARPRUN_PIPELINE_NAME}.yml" >> pipeline.env
+        echo "Pipeline file found"
+      fi
     - cat pipeline.env
   artifacts:
     reports:
       dotenv: pipeline.env
-  rules:
-    - if: $WARPRUN_PIPELINE_NAME
 
-# Trigger the child pipeline with explicit include path
+# Trigger the child pipeline
 execute-pipeline:
-  stage: execute
-  needs: [generate-child-config]
+  needs: [validate-pipeline]
   trigger:
     include:
       - local: $CHILD_PIPELINE_FILE
@@ -51,15 +42,17 @@ execute-pipeline:
     forward:
       pipeline_variables: true
   rules:
-    - if: $WARPRUN_PIPELINE_NAME
+    - if: $PIPELINE_VALID == "true"
 
-# Fallback when no pipeline name is provided
-no-pipeline-specified:
-  stage: validate
+# Fallback when validation fails
+pipeline-error:
+  needs: [validate-pipeline]
   script:
-    - echo "No WARPRUN_PIPELINE_NAME provided."
-    - echo "This pipeline is designed to be triggered by WarpRun."
-    - ls -la pipelines/ || echo "No pipelines folder found"
+    - echo "=========================================="
+    - echo "ERROR - $PIPELINE_ERROR"
+    - echo "=========================================="
+    - echo "Available pipelines:"
+    - ls -1 pipelines/*.yml 2>/dev/null | sed 's|pipelines/||; s|\.yml||' || echo "(none)"
     - exit 1
   rules:
-    - if: $WARPRUN_PIPELINE_NAME == null
+    - if: $PIPELINE_VALID == "false"
