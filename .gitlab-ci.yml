@@ -2,7 +2,11 @@
 # WarpRun Dynamic Pipeline Router
 
 workflow:
-  name: "WarpRun Router"
+  name: "WarpRun Router"  
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "trigger"  # API/trigger token (WarpRun)
+    - if: $CI_PIPELINE_SOURCE == "web"      # Manual from GitLab UI
+    - when: never
 
 stages:
   - validate
