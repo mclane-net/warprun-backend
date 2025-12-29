@@ -1,0 +1,26 @@
+# pipelines/hello-world.yml
+# A simple test pipeline to verify WarpRun integration
+
+workflow:
+  name: "Hello World Pipeline"
+
+stages:
+  - test
+
+hello:
+  stage: test
+  script:
+    - echo "=========================================="
+    - echo "  Hello from WarpRun Pipeline!"
+    - echo "=========================================="
+    - echo ""
+    - echo "Pipeline Name: $WARPRUN_PIPELINE_NAME"
+    - echo "Correlation ID: $WARPRUN_CORRELATION_ID"
+    - echo "GitLab Pipeline ID: $CI_PIPELINE_ID"
+    - echo "GitLab Job ID: $CI_JOB_ID"
+    - echo "Triggered at: $(date)"
+    - echo ""
+    - echo "All variables from WarpRun:"
+    - env | grep WARPRUN_ || echo "No WARPRUN_ variables found"
+    - echo ""
+    - echo "Pipeline completed successfully!"
