@@ -1,6 +1,5 @@
 # .gitlab-ci.yml
 # WarpRun Dynamic Pipeline Router
-# This file routes to child pipelines based on WARPRUN_PIPELINE_NAME variable
 
 workflow:
   name: "WarpRun: ${WARPRUN_PIPELINE_NAME:-no-pipeline-specified}"
@@ -13,20 +12,10 @@ stages:
 validate-pipeline:
   stage: validate
   script:
-    - echo "Requested pipeline: $WARPRUN_PIPELINE_NAME"
-    - echo "Correlation ID: $WARPRUN_CORRELATION_ID"
-    - |
-      if [ -z "$WARPRUN_PIPELINE_NAME" ]; then
-        echo "ERROR: WARPRUN_PIPELINE_NAME variable is not set"
-        exit 1
-      fi
-    - |
-      if [ ! -f "pipelines/${WARPRUN_PIPELINE_NAME}.yml" ]; then
-        echo "ERROR: Pipeline file 'pipelines/${WARPRUN_PIPELINE_NAME}.yml' not found"
-        echo "Available pipelines:"
-        ls -la pipelines/
-        exit 1
-      fi
+    - echo "Requested pipeline - $WARPRUN_PIPELINE_NAME"
+    - echo "Correlation ID - $WARPRUN_CORRELATION_ID"
+    - if [ -z "$WARPRUN_PIPELINE_NAME" ]; then echo "ERROR - WARPRUN_PIPELINE_NAME variable is not set"; exit 1; fi
+    - if [ ! -f "pipelines/${WARPRUN_PIPELINE_NAME}.yml" ]; then echo "ERROR - Pipeline file not found"; ls -la pipelines/; exit 1; fi
     - echo "Pipeline file found. Proceeding..."
   rules:
     - if: $WARPRUN_PIPELINE_NAME
@@ -47,8 +36,7 @@ no-pipeline-specified:
   stage: validate
   script:
     - echo "No WARPRUN_PIPELINE_NAME provided."
-    - echo "This pipeline is designed to be triggered by WarpRun with a pipeline name."
-    - echo "Available pipelines:"
+    - echo "This pipeline is designed to be triggered by WarpRun."
     - ls -la pipelines/ || echo "No pipelines folder found"
     - exit 1
   rules:
