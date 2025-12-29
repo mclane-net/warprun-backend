@@ -1,0 +1,39 @@
+variables:
+  WARPRUN_CORRELATION_ID: ""  # Will be populated by WarpRun
+
+stages:
+  - build
+  - notify
+
+# ... your build jobs ...
+
+# Optional: Send feedback back to WarpRun at the end
+notify_warprun:
+  stage: notify
+  script:
+    - |
+      curl -X POST "$WARPRUN_API_URL/api/backend-feedback" \
+      -H "Authorization: Bearer $KEYCLOAK_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "correlationId": "'$WARPRUN_CORRELATION_ID'",
+        variables:
+  WARPRUN_CORRELATION_ID: ""  # Will be populated by WarpRun
+
+stages:
+  - build
+  - notify
+
+# ... your build jobs ...
+
+# Optional: Send feedback back to WarpRun at the end
+notify_warprun:
+  stage: notify
+  script:
+    - |
+      curl -X POST "$WARPRUN_API_URL/api/backend-feedback" \
+      -H "Authorization: Bearer $KEYCLOAK_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "correlationId": "'$WARPRUN_CORRELATION_ID'",
+        
