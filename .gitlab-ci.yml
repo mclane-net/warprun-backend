@@ -2,7 +2,7 @@
 # WarpRun Dynamic Pipeline Router
 
 workflow:
-  name: "WarpRun: ${WARPRUN_PIPELINE_NAME:-no-pipeline-specified}"
+  name: "WarpRun Router"
 
 stages:
   - validate
