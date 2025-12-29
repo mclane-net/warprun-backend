@@ -19,15 +19,33 @@ validate-pipeline:
     - echo "Pipeline file found. Proceeding..."
   rules:
     - if: $WARPRUN_PIPELINE_NAME
+  artifacts:
+    reports:
+      dotenv: pipeline.env
 
-# Generate and trigger the child pipeline
+# Generate the pipeline path for child trigger
+generate-child-config:
+  stage: validate
+  needs: [validate-pipeline]
+  script:
+    - echo "CHILD_PIPELINE_FILE=pipelines/${WARPRUN_PIPELINE_NAME}.yml" >> pipeline.env
+    - cat pipeline.env
+  artifacts:
+    reports:
+      dotenv: pipeline.env
+  rules:
+    - if: $WARPRUN_PIPELINE_NAME
+
+# Trigger the child pipeline with explicit include path
 execute-pipeline:
   stage: execute
-  needs: [validate-pipeline]
+  needs: [generate-child-config]
   trigger:
     include:
-      - local: "pipelines/${WARPRUN_PIPELINE_NAME}.yml"
+      - local: $CHILD_PIPELINE_FILE
     strategy: depend
+    forward:
+      pipeline_variables: true
   rules:
     - if: $WARPRUN_PIPELINE_NAME
 
