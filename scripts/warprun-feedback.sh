@@ -16,6 +16,10 @@
 #   WARPRUN_REQUEST_ID       UUID of the WarpRun Request
 #   WARPRUN_CORRELATION_ID   tracing ID
 #   WARPRUN_PIPELINE_STATUS  set by notify-warprun job: success|failed|cancelled
+#
+# Optional (set by notify-warprun fallback logic):
+#   FEEDBACK_ERROR_CONTEXT   human-readable error reason (missing/unknown pipeline name)
+#                            when set, takes priority over generic CI_PIPELINE_URL message
 # =============================================================================
 
 set -euo pipefail
@@ -38,9 +42,10 @@ for var in "${required_vars[@]}"; do
   fi
 done
 
-echo "[warprun-feedback] Request ID  : $WARPRUN_REQUEST_ID"
-echo "[warprun-feedback] Status      : $WARPRUN_PIPELINE_STATUS"
-echo "[warprun-feedback] Pipeline ID : ${CI_PIPELINE_ID:-n/a}"
+echo "[warprun-feedback] Request ID    : $WARPRUN_REQUEST_ID"
+echo "[warprun-feedback] Status        : $WARPRUN_PIPELINE_STATUS"
+echo "[warprun-feedback] Pipeline ID   : ${CI_PIPELINE_ID:-n/a}"
+echo "[warprun-feedback] Error context : ${FEEDBACK_ERROR_CONTEXT:-<none>}"
 
 # ── Map status → PipelineRunStatus enum ──────────────────────────────────────
 # WarpRun: Pending=0, Running=1, Success=2, Failed=3, Cancelled=4
@@ -78,12 +83,20 @@ fi
 echo "[warprun-feedback] Token acquired."
 
 # ── Build JSON payload ────────────────────────────────────────────────────────
-# outputData only on failure — contains diagnostic info for debugging
 EXTERNAL_RUN_ID="${CI_PIPELINE_ID:-}"
 
 if [[ "$STATUS_CODE" -eq 3 ]]; then
-  # Failed: include diagnostics in outputData
-  ERROR_MESSAGE="Pipeline failed. See: ${CI_PIPELINE_URL:-N/A}"
+  # ── Failed: resolve errorMessage ────────────────────────────────────────────
+  # Priority:
+  #   1. FEEDBACK_ERROR_CONTEXT — specific reason (missing/unknown pipeline name)
+  #   2. CI_PIPELINE_URL        — generic "pipeline failed, see logs" with link
+  if [[ -n "${FEEDBACK_ERROR_CONTEXT:-}" ]]; then
+    ERROR_MESSAGE="${FEEDBACK_ERROR_CONTEXT}"
+  else
+    ERROR_MESSAGE="Pipeline failed. See: ${CI_PIPELINE_URL:-N/A}"
+  fi
+
+  # outputData: GitLab diagnostic context (always included on failure)
   OUTPUT_DATA=$(jq -n \
     --arg pipeline_id    "${CI_PIPELINE_ID:-}" \
     --arg pipeline_url   "${CI_PIPELINE_URL:-}" \
@@ -91,13 +104,15 @@ if [[ "$STATUS_CODE" -eq 3 ]]; then
     --arg project_path   "${CI_PROJECT_PATH:-}" \
     --arg runner         "${CI_RUNNER_DESCRIPTION:-}" \
     --arg pipeline_name  "${WARPRUN_PIPELINE_NAME:-}" \
+    --arg error_context  "${FEEDBACK_ERROR_CONTEXT:-}" \
     '{
       gitlab_pipeline_id:    $pipeline_id,
       gitlab_pipeline_url:   $pipeline_url,
       gitlab_job_id:         $job_id,
       gitlab_project_path:   $project_path,
       runner_description:    $runner,
-      warprun_pipeline_name: $pipeline_name
+      warprun_pipeline_name: $pipeline_name,
+      error_context:         $error_context
     }')
 
   PAYLOAD=$(jq -n \
