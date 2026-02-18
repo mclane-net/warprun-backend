@@ -1,0 +1,75 @@
+# pipelines/azure-deploy-vm.yml
+# WarpRun Child Pipeline: Azure VM Deployment
+# Triggered by WarpRun with WARPRUN_PIPELINE_NAME=azure-deploy-vm
+
+workflow:
+  name: "Azure Deploy VM | $vm_name | $environment"
+
+stages:
+  - inspect
+  - deploy
+  - verify
+
+# ── Display all received variables ────────────────────────────────────────────
+inspect-variables:
+  stage: inspect
+  script:
+    - echo "========================================="
+    - echo "  WarpRun Azure VM Deployment Pipeline"
+    - echo "========================================="
+    - echo ""
+    - echo "--- WarpRun Context ---"
+    - echo "Request ID      : ${WARPRUN_REQUEST_ID:-<not set>}"
+    - echo "Pipeline Run ID : ${WARPRUN_PIPELINE_RUN_ID:-<not set>}"
+    - echo "Pipeline Name   : ${WARPRUN_PIPELINE_NAME:-<not set>}"
+    - echo "Correlation ID  : ${WARPRUN_CORRELATION_ID:-<not set>}"
+    - echo ""
+    - echo "--- Azure Target ---"
+    - echo "Subscription    : ${subscription_id:-<not set>}"
+    - echo "Resource Group  : ${resource_group:-<not set>}"
+    - echo "Environment     : ${environment:-<not set>}"
+    - echo "Region          : ${region:-<not set>}"
+    - echo ""
+    - echo "--- Virtual Machine ---"
+    - echo "VM Name         : ${vm_name:-<not set>}"
+    - echo "VM Size         : ${vm_size:-<not set>}"
+    - echo "OS Disk SKU     : ${os_disk_sku:-<not set>}"
+    - echo "OS Disk Size GB : ${os_disk_size_gb:-<not set>}"
+    - echo "Data Disk Count : ${data_disk_count:-<not set>}"
+    - echo "Data Disk Specs : ${data_disk_specs:-<not set>}"
+    - echo ""
+    - echo "--- Networking ---"
+    - echo "VNet Name       : ${vnet_name:-<not set>}"
+    - echo "VNet CIDR       : ${vnet_cidr:-<not set>}"
+    - echo "Subnet Name     : ${subnet_name:-<not set>}"
+    - echo "Subnet CIDR     : ${subnet_cidr:-<not set>}"
+    - echo ""
+    - echo "--- Lifecycle ---"
+    - echo "Auto Delete     : ${lifecycle_auto_delete:-<not set>}"
+    - echo "Delete After    : ${lifecycle_delete_after:-<not set>}"
+    - echo ""
+    - echo "--- All WARPRUN_ variables ---"
+    - env | grep -E '^WARPRUN_' | sort || echo "  (none found)"
+    - echo ""
+    - echo "--- GitLab CI Context ---"
+    - echo "GitLab Pipeline : ${CI_PIPELINE_URL:-<not set>}"
+    - echo "GitLab Job ID   : ${CI_JOB_ID:-<not set>}"
+    - echo "Runner          : ${CI_RUNNER_DESCRIPTION:-<not set>}"
+    - echo "========================================="
+
+# ── Placeholder: actual Azure deployment ──────────────────────────────────────
+deploy-vm:
+  stage: deploy
+  script:
+    - echo "[deploy-vm] Starting Azure VM deployment..."
+    - echo "[deploy-vm] Target: $vm_name in $resource_group ($region)"
+    - echo "[deploy-vm] TODO: replace with actual az cli / Terraform / Ansible commands"
+    - echo "[deploy-vm] Done."
+
+# ── Placeholder: post-deployment verification ─────────────────────────────────
+verify-vm:
+  stage: verify
+  script:
+    - echo "[verify-vm] Verifying VM deployment..."
+    - echo "[verify-vm] TODO: replace with health check / connectivity test"
+    - echo "[verify-vm] All checks passed."
