@@ -18,24 +18,26 @@ validate-pipeline:
   stage: validate
   script:
     - echo "=== WarpRun Pipeline Router ==="
-    - echo "Pipeline      : $WARPRUN_PIPELINE_NAME"
-    - echo "Request ID    : $WARPRUN_REQUEST_ID"
-    - echo "Correlation ID: $WARPRUN_CORRELATION_ID"
+    - echo "Pipeline      : ${WARPRUN_PIPELINE_NAME:-<not set>}"
+    - echo "Request ID    : ${WARPRUN_REQUEST_ID:-<not set>}"
+    - echo "Correlation ID: ${WARPRUN_CORRELATION_ID:-<not set>}"
     - |
-      if [ -z "$WARPRUN_PIPELINE_NAME" ]; then
-        echo "ERROR: WARPRUN_PIPELINE_NAME is not set"
+      if [ -z "${WARPRUN_PIPELINE_NAME:-}" ]; then
+        echo "WARPRUN_PIPELINE_NAME is not set or empty"
         exit 1
       fi
     - |
       if [ ! -f "pipelines/${WARPRUN_PIPELINE_NAME}.yml" ]; then
-        echo "ERROR: Pipeline file 'pipelines/${WARPRUN_PIPELINE_NAME}.yml' not found"
+        echo "Pipeline file 'pipelines/${WARPRUN_PIPELINE_NAME}.yml' not found"
         echo "Available pipelines:"
         ls -1 pipelines/*.yml 2>/dev/null || echo "  (none)"
         exit 1
       fi
     - echo "OK: Pipeline file found"
+  # Runs for both cases: name set (normal) and name missing/null (fallback)
+  # Exit code propagates to notify-warprun via GitLab API status check
   rules:
-    - if: $WARPRUN_PIPELINE_NAME
+    - when: always
 
 # ── Generate child pipeline path (dotenv artifact) ────────────────────────────
 generate-child-config:
@@ -69,14 +71,19 @@ execute-pipeline:
     - if: $WARPRUN_PIPELINE_NAME
 
 # ── Send result back to WarpRun Frontend ──────────────────────────────────────
-# when: always   → runs even if execute-pipeline failed or was cancelled
-# optional: true → runs even if execute-pipeline was skipped
-# Uses CI_JOB_TOKEN + GitLab API to resolve actual execute-pipeline status,
-# because GitLab does not expose upstream job status as a CI variable.
+# when: always   → runs in ALL cases: success, failed, cancelled, skipped
+# optional: true → runs even when execute-pipeline was skipped (name missing/unknown)
+#
+# Status resolution logic (via GitLab API):
+#   1. execute-pipeline ran       → use its status (success/failed/cancelled)
+#   2. execute-pipeline skipped   → validate-pipeline failed → report Failed
+#   3. WARPRUN_REQUEST_ID missing  → skip feedback (nothing to report to)
 notify-warprun:
   stage: feedback
   image: alpine:3.19
   needs:
+    - job: validate-pipeline
+      optional: true
     - job: execute-pipeline
       optional: true
   when: always
@@ -86,38 +93,56 @@ notify-warprun:
   script:
     - |
       echo "=== WarpRun Feedback Stage ==="
-      echo "Resolving execute-pipeline status via GitLab API..."
+
+      # Cannot report without a RequestId
+      if [ -z "${WARPRUN_REQUEST_ID:-}" ]; then
+        echo "WARPRUN_REQUEST_ID is not set — pipeline was not triggered by WarpRun. Skipping feedback."
+        exit 0
+      fi
+
+      echo "Resolving pipeline status via GitLab API..."
 
       JOBS_JSON=$(curl --silent --fail \
         --header "JOB-TOKEN: $CI_JOB_TOKEN" \
         "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/pipelines/${CI_PIPELINE_ID}/jobs?per_page=50")
 
+      # 1. Check execute-pipeline status first (normal path)
       EXECUTE_STATUS=$(echo "$JOBS_JSON" \
-        | jq -r '[.[] | select(.name == "execute-pipeline")] | sort_by(.id) | last | .status // "failed"')
+        | jq -r '[.[] | select(.name == "execute-pipeline")] | sort_by(.id) | last | .status // ""')
 
-      echo "execute-pipeline status: $EXECUTE_STATUS"
+      echo "execute-pipeline status : ${EXECUTE_STATUS:-<not found>}"
 
-      case "$EXECUTE_STATUS" in
-        success)            WARPRUN_PIPELINE_STATUS="success" ;;
-        failed)             WARPRUN_PIPELINE_STATUS="failed" ;;
-        canceled|cancelled) WARPRUN_PIPELINE_STATUS="cancelled" ;;
-        skipped)            WARPRUN_PIPELINE_STATUS="cancelled" ;;
-        *)                  WARPRUN_PIPELINE_STATUS="failed" ;;
-      esac
+      if [ -n "$EXECUTE_STATUS" ] && [ "$EXECUTE_STATUS" != "skipped" ] && [ "$EXECUTE_STATUS" != "created" ]; then
+        # Normal path: execute-pipeline ran → use its result
+        case "$EXECUTE_STATUS" in
+          success)            WARPRUN_PIPELINE_STATUS="success" ;;
+          failed)             WARPRUN_PIPELINE_STATUS="failed" ;;
+          canceled|cancelled) WARPRUN_PIPELINE_STATUS="cancelled" ;;
+          *)                  WARPRUN_PIPELINE_STATUS="failed" ;;
+        esac
+        FEEDBACK_ERROR_CONTEXT=""
+      else
+        # Fallback path: execute-pipeline was skipped → validate-pipeline failed
+        # Determine the exact reason from validate-pipeline status
+        VALIDATE_STATUS=$(echo "$JOBS_JSON" \
+          | jq -r '[.[] | select(.name == "validate-pipeline")] | sort_by(.id) | last | .status // "failed"')
 
-      echo "Mapped WarpRun status: $WARPRUN_PIPELINE_STATUS"
+        echo "validate-pipeline status: ${VALIDATE_STATUS}"
+
+        WARPRUN_PIPELINE_STATUS="failed"
+
+        if [ -z "${WARPRUN_PIPELINE_NAME:-}" ]; then
+          FEEDBACK_ERROR_CONTEXT="Pipeline name (WARPRUN_PIPELINE_NAME) was not provided in the trigger request."
+        else
+          FEEDBACK_ERROR_CONTEXT="Pipeline '${WARPRUN_PIPELINE_NAME}' was not found in pipelines/ directory."
+        fi
+      fi
+
+      echo "Mapped WarpRun status   : $WARPRUN_PIPELINE_STATUS"
+      [ -n "${FEEDBACK_ERROR_CONTEXT:-}" ] && echo "Error context           : $FEEDBACK_ERROR_CONTEXT"
+
       export WARPRUN_PIPELINE_STATUS
+      export FEEDBACK_ERROR_CONTEXT
     - bash scripts/warprun-feedback.sh
   rules:
-    - if: $WARPRUN_PIPELINE_NAME && $WARPRUN_REQUEST_ID
-
-# ── Fallback: no pipeline name provided ───────────────────────────────────────
-no-pipeline-specified:
-  stage: validate
-  script:
-    - echo "No WARPRUN_PIPELINE_NAME provided."
-    - echo "This pipeline is triggered by WarpRun only."
-    - ls -la pipelines/ || echo "(no pipelines folder)"
-    - exit 1
-  rules:
-    - if: $WARPRUN_PIPELINE_NAME == null
+    - when: always
