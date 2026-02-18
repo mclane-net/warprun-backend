@@ -128,14 +128,27 @@ else
     }')
 fi
 
+# ── Debug: print target URL and full payload ──────────────────────────────────
+FEEDBACK_URL="${WARPRUN_API_URL}/api/backend-feedback"
+
+echo ""
+echo "[warprun-feedback] ┌─────────────────────────────────────────┐"
+echo "[warprun-feedback] │           REQUEST DETAILS               │"
+echo "[warprun-feedback] └─────────────────────────────────────────┘"
+echo "[warprun-feedback] URL    : POST ${FEEDBACK_URL}"
+echo "[warprun-feedback] Header : X-Correlation-Id: ${WARPRUN_CORRELATION_ID:-}"
+echo "[warprun-feedback] Payload:"
+echo "$PAYLOAD" | jq .
+echo ""
+
 # ── POST to WarpRun backend-feedback endpoint ─────────────────────────────────
-echo "[warprun-feedback] Sending feedback to ${WARPRUN_API_URL}/api/backend-feedback ..."
+echo "[warprun-feedback] Sending..."
 
 HTTP_STATUS=$(curl --silent \
   --output /tmp/warprun_response.json \
   --write-out "%{http_code}" \
   --request POST \
-  --url "${WARPRUN_API_URL}/api/backend-feedback" \
+  --url "${FEEDBACK_URL}" \
   --header "Authorization: Bearer ${ACCESS_TOKEN}" \
   --header "Content-Type: application/json" \
   --header "X-Correlation-Id: ${WARPRUN_CORRELATION_ID:-}" \
@@ -143,7 +156,13 @@ HTTP_STATUS=$(curl --silent \
 
 RESPONSE_BODY=$(cat /tmp/warprun_response.json 2>/dev/null || echo "")
 
-echo "[warprun-feedback] HTTP Status: $HTTP_STATUS"
+echo "[warprun-feedback] ┌─────────────────────────────────────────┐"
+echo "[warprun-feedback] │           RESPONSE DETAILS              │"
+echo "[warprun-feedback] └─────────────────────────────────────────┘"
+echo "[warprun-feedback] HTTP Status : $HTTP_STATUS"
+echo "[warprun-feedback] Body        :"
+echo "$RESPONSE_BODY" | jq . 2>/dev/null || echo "$RESPONSE_BODY"
+echo ""
 
 case "$HTTP_STATUS" in
   200)
@@ -155,7 +174,6 @@ case "$HTTP_STATUS" in
     ;;
   404)
     echo "[warprun-feedback] ❌ RequestId not found (404): ${WARPRUN_REQUEST_ID}"
-    echo "[warprun-feedback] Response: $RESPONSE_BODY"
     exit 1
     ;;
   401|403)
@@ -164,7 +182,6 @@ case "$HTTP_STATUS" in
     ;;
   *)
     echo "[warprun-feedback] ❌ Unexpected HTTP ${HTTP_STATUS}"
-    echo "[warprun-feedback] Response: $RESPONSE_BODY"
     exit 1
     ;;
 esac
